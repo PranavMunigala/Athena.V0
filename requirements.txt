@@ -1,0 +1,1 @@
+pip install pymupdf sentence-transformers chromadb openai streamlit python-dotenv

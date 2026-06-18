@@ -1,5 +1,5 @@
-def main() -> None:
-    print("what about now")
+def main():
+    print("Hello from athena-v0!")
 
 
 if __name__ == "__main__":
