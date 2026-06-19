@@ -5,20 +5,19 @@ This module handles retrieval from the vector store and answer generation
 using the configured LLM with strict system prompts.
 
 Required packages:
-    pip install pymupdf sentence-transformers chromadb openai streamlit
+    pip install pymupdf chromadb openai streamlit python-dotenv
 """
 
 import math
 from typing import List, Dict, Optional
 import chromadb
-from sentence_transformers import SentenceTransformer
 from openai import OpenAI, APIError
+from embeddings import OpenAIEmbedder
 
 
 # Configuration
 CHROMA_DB_DIR = "./chroma_db"
 COLLECTION_NAME = "athena_notes"
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 SIMILARITY_THRESHOLD = 0.15
 
 
@@ -27,7 +26,7 @@ class RAGBackend:
     
     def __init__(
         self,
-        model: SentenceTransformer,
+        model: OpenAIEmbedder,
         chroma_client: chromadb.PersistentClient,
         llm_api_key: Optional[str] = None,
         llm_base_url: Optional[str] = None,
@@ -37,7 +36,7 @@ class RAGBackend:
         Initialize RAG backend.
         
         Args:
-            model: SentenceTransformer model instance for embeddings
+            model: OpenAIEmbedder instance for embeddings
             chroma_client: Chroma PersistentClient instance
             llm_api_key: OpenAI API key (defaults to OPENAI_API_KEY env var)
             llm_base_url: Base URL for LLM endpoint (for local models like Ollama)
@@ -56,15 +55,15 @@ class RAGBackend:
         else:
             self.llm_client = OpenAI(api_key=llm_api_key)
     
-    def _l2_distance_to_cosine_similarity(self, l2_distance: float) -> float:
+    def _distance_to_similarity(self, distance: float) -> float:
         """
-        Convert Chroma's returned L2 distance to a cosine-like similarity.
+        Convert Chroma's returned cosine distance to a cosine similarity.
 
-        Chroma's default L2 space returns squared L2 distance. For normalized
-        vectors, squared_l2 = 2 * (1 - cosine_similarity), so:
-        cosine_similarity = 1 - (squared_l2 / 2)
+        The collection is created with ``hnsw:space="cosine"`` (see ingest.py
+        and __init__), so Chroma returns cosine distance = 1 - cosine_similarity.
+        Therefore cosine_similarity = 1 - distance.
         """
-        similarity = 1 - (l2_distance / 2)
+        similarity = 1 - distance
         return max(0.0, min(1.0, similarity))
     
     def retrieve(self, query: str, k: int = 5) -> List[Dict]:
@@ -96,7 +95,7 @@ class RAGBackend:
             distances = results["distances"][0] if results["distances"] else [float('inf')] * len(documents)
             
             for doc, metadata, distance in zip(documents, metadatas, distances):
-                similarity_score = self._l2_distance_to_cosine_similarity(distance)
+                similarity_score = self._distance_to_similarity(distance)
                 retrieved_chunks.append({
                     "text": doc,
                     "metadata": metadata,
@@ -144,11 +143,13 @@ class RAGBackend:
         
         # Build the system prompt
         system_prompt = (
-            "You are Athena v0, a strict study assistant. Answer the user's question using ONLY "
-            "the provided context blocks. Do not invent facts. Every claim you make must be accompanied "
-            "by an inline citation format referencing its source file and page, exactly like this: "
-            "[filename.pdf p.X]. If the context does not contain enough information to answer the "
-            "question, or if you are unsure, reply exactly with: 'I don't see this in your notes.'"
+            "You are Athena v0, a helpful study assistant. Answer the user's question using the "
+            "provided context blocks as your source of truth. Do not invent facts that contradict "
+            "the context. Cite the source for your claims using inline citations like [filename.pdf p.X]. "
+            "If the question is brief or a single keyword (e.g. a topic name), interpret it generously "
+            "and summarize what the context says about that topic. Only reply exactly with "
+            "'I don't see this in your notes.' when the context blocks contain nothing relevant to the "
+            "question at all."
         )
         
         # Call LLM
@@ -183,7 +184,7 @@ def create_rag_backend(
     Returns:
         Initialized RAGBackend instance
     """
-    model = SentenceTransformer(MODEL_NAME)
+    model = OpenAIEmbedder()
     client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
     
     return RAGBackend(

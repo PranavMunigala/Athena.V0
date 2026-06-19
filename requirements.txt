@@ -1,1 +1,1 @@
-pip install pymupdf sentence-transformers chromadb openai streamlit python-dotenv
+pip install pymupdf chromadb openai streamlit python-dotenv numpy

@@ -5,7 +5,7 @@ Interactive web interface for the RAG system with sidebar analytics
 and retrieved context visibility.
 
 Required packages:
-    pip install pymupdf sentence-transformers chromadb openai streamlit
+    pip install pymupdf chromadb openai streamlit python-dotenv
 """
 
 import os
@@ -20,7 +20,7 @@ st.set_page_config(
 
 from pathlib import Path
 import chromadb
-from sentence_transformers import SentenceTransformer
+from embeddings import OpenAIEmbedder
 from rag import RAGBackend
 
 
@@ -30,7 +30,6 @@ load_dotenv()
 
 # Configuration
 CHROMA_DB_DIR = "./chroma_db"
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 SIMILARITY_THRESHOLD_PERCENT = 15
 
 # Custom CSS for better styling
@@ -94,8 +93,8 @@ st.markdown("""
 
 @st.cache_resource
 def load_embedding_model():
-    """Load the embedding model (cached to avoid reinitialization)."""
-    return SentenceTransformer(MODEL_NAME)
+    """Load the embedder (cached to avoid reinitialization)."""
+    return OpenAIEmbedder()
 
 
 @st.cache_resource
@@ -172,9 +171,12 @@ def main():
 
     llm_api_key = os.getenv("OPENAI_API_KEY", "")
     llm_base_url = os.getenv("LLM_BASE_URL", None)
-    if not llm_api_key and not llm_base_url:
+    # Embeddings always use OpenAI (text-embedding-3-small), so an OpenAI key is
+    # required even when the chat LLM points at a local endpoint via LLM_BASE_URL.
+    if not llm_api_key:
         st.error(
             "OPENAI_API_KEY is not set in your environment or .env file. "
+            "It is required for embeddings (text-embedding-3-small). "
             "Add OPENAI_API_KEY to .env before launching Athena."
         )
         st.stop()
@@ -239,11 +241,21 @@ def main():
                     )
                     if retrieved_chunks:
                         max_sim = max(c["similarity_score"] for c in retrieved_chunks)
-                        st.info(
-                            f"The highest similarity score ({format_similarity_score(max_sim)}) "
-                            f"fell below the confidence threshold ({SIMILARITY_THRESHOLD_PERCENT}%). "
-                            f"Check the retrieved context in the sidebar to see what was found."
-                        )
+                        if max_sim * 100 < SIMILARITY_THRESHOLD_PERCENT:
+                            st.info(
+                                f"The highest similarity score ({format_similarity_score(max_sim)}) "
+                                f"fell below the confidence threshold ({SIMILARITY_THRESHOLD_PERCENT}%). "
+                                f"Check the retrieved context in the sidebar to see what was found."
+                            )
+                        else:
+                            st.info(
+                                f"Relevant context was retrieved (highest similarity "
+                                f"{format_similarity_score(max_sim)}), but the model judged it "
+                                f"insufficient to answer this question and declined. "
+                                f"Try rephrasing as a specific question — single keywords like "
+                                f"\"Neurotechnology\" give the model little to answer. "
+                                f"Check the retrieved context in the sidebar to see what was found."
+                            )
             else:
                 with answer_placeholder.container():
                     st.markdown(

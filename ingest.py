@@ -5,7 +5,7 @@ This module processes PDF files from the corpus/ directory, chunks them,
 and populates a persistent Chroma vector database with embeddings.
 
 Required packages:
-    pip install pymupdf sentence-transformers chromadb openai streamlit
+    pip install pymupdf chromadb openai streamlit python-dotenv
 """
 
 import os
@@ -14,16 +14,22 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 import fitz  # pymupdf
 import chromadb
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from embeddings import OpenAIEmbedder
+
+
+# Load environment variables (OPENAI_API_KEY) from .env if present
+load_dotenv()
 
 
 # Configuration
 CORPUS_DIR = "./corpus"
 CHROMA_DB_DIR = "./chroma_db"
 COLLECTION_NAME = "athena_notes"
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNK_TOKEN_SIZE = 400
 CHUNK_OVERLAP_TOKENS = 50
+# Number of chunks to embed/insert per OpenAI request (well within API limits).
+EMBED_BATCH_SIZE = 100
 # Rough approximation: 1 token ≈ 4 characters
 CHAR_PER_TOKEN = 4
 CHUNK_CHAR_SIZE = CHUNK_TOKEN_SIZE * CHAR_PER_TOKEN
@@ -111,13 +117,33 @@ def generate_unique_id(filename: str, page: int, chunk_idx: int) -> str:
     return f"{clean_filename}_p{page}_c{chunk_idx}"
 
 
+def flush_batch(model, collection, ids: List[str], texts: List[str],
+                metadatas: List[Dict]) -> int:
+    """
+    Embed a batch of chunks in a single API call and add them to the collection.
+
+    Returns the number of chunks written and leaves the input lists for the
+    caller to clear.
+    """
+    if not texts:
+        return 0
+    embeddings = model.encode(texts, convert_to_numpy=True)
+    collection.add(
+        ids=ids,
+        embeddings=embeddings.tolist(),
+        documents=texts,
+        metadatas=metadatas,
+    )
+    return len(texts)
+
+
 def ingest_pdfs():
     """
     Main ingestion function: load PDFs, chunk them, embed, and store in Chroma.
     """
-    # Initialize model and Chroma client
-    print("Loading embedding model...")
-    model = SentenceTransformer(MODEL_NAME)
+    # Initialize embedder and Chroma client
+    print("Initializing OpenAI embedder...")
+    model = OpenAIEmbedder()
     
     print(f"Initializing Chroma persistent client at {CHROMA_DB_DIR}...")
     client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
@@ -140,40 +166,44 @@ def ingest_pdfs():
         return
     
     total_chunks_added = 0
-    
+
+    # Pending batch buffers, flushed once they reach EMBED_BATCH_SIZE.
+    batch_ids: List[str] = []
+    batch_texts: List[str] = []
+    batch_metadatas: List[Dict] = []
+
     for pdf_file in pdf_files:
         print(f"\nProcessing: {pdf_file.name}")
         pages = extract_text_from_pdf(str(pdf_file))
-        
+
         if not pages:
             print(f"  No text extracted from {pdf_file.name}")
             continue
-        
+
         for text, page_num in pages:
             chunks = chunk_text_with_overlap(text)
-            
+
             for chunk_idx, chunk in enumerate(chunks):
-                chunk_id = generate_unique_id(pdf_file.name, page_num, chunk_idx)
-                metadata = {
-                    "source": pdf_file.name,
-                    "page": page_num
-                }
-                
-                # Embed the chunk
-                embedding = model.encode(chunk, convert_to_numpy=True)
-                
-                # Add to collection
-                collection.add(
-                    ids=[chunk_id],
-                    embeddings=[embedding.tolist()],
-                    documents=[chunk],
-                    metadatas=[metadata]
-                )
-                
-                total_chunks_added += 1
-            
-            print(f"  Page {page_num}: {len(chunks)} chunks added")
-    
+                batch_ids.append(generate_unique_id(pdf_file.name, page_num, chunk_idx))
+                batch_texts.append(chunk)
+                batch_metadatas.append({"source": pdf_file.name, "page": page_num})
+
+                # Flush once the batch is full.
+                if len(batch_texts) >= EMBED_BATCH_SIZE:
+                    total_chunks_added += flush_batch(
+                        model, collection, batch_ids, batch_texts, batch_metadatas
+                    )
+                    batch_ids.clear()
+                    batch_texts.clear()
+                    batch_metadatas.clear()
+
+            print(f"  Page {page_num}: {len(chunks)} chunks prepared")
+
+    # Flush any remaining chunks in the final partial batch.
+    total_chunks_added += flush_batch(
+        model, collection, batch_ids, batch_texts, batch_metadatas
+    )
+
     print(f"\n✓ Ingestion complete! Total chunks added: {total_chunks_added}")
 
 
