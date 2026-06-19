@@ -30,7 +30,7 @@ CHUNK_TOKEN_SIZE = 400
 CHUNK_OVERLAP_TOKENS = 50
 # Number of chunks to embed/insert per OpenAI request (well within API limits).
 EMBED_BATCH_SIZE = 100
-# Rough approximation: 1 token ≈ 4 characters
+# Rough approximation: 1 token is about 4 characters
 CHAR_PER_TOKEN = 4
 CHUNK_CHAR_SIZE = CHUNK_TOKEN_SIZE * CHAR_PER_TOKEN
 CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * CHAR_PER_TOKEN
@@ -204,7 +204,7 @@ def ingest_pdfs():
         model, collection, batch_ids, batch_texts, batch_metadatas
     )
 
-    print(f"\n✓ Ingestion complete! Total chunks added: {total_chunks_added}")
+    print(f"\nIngestion complete! Total chunks added: {total_chunks_added}")
 
 
 if __name__ == "__main__":
