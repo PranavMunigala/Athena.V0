@@ -12,7 +12,7 @@ import math
 from typing import List, Dict, Optional
 import chromadb
 from openai import OpenAI, APIError
-from embeddings import OpenAIEmbedder
+from v1.embeddings import OpenAIEmbedder
 
 
 # Configuration

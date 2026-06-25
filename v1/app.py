@@ -20,8 +20,8 @@ st.set_page_config(
 
 from pathlib import Path
 import chromadb
-from embeddings import OpenAIEmbedder
-from rag import RAGBackend
+from v1.embeddings import OpenAIEmbedder
+from v1.rag import RAGBackend
 
 
 # Load environment variables from .env if present

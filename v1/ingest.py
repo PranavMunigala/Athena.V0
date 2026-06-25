@@ -15,7 +15,7 @@ from typing import List, Dict, Tuple
 import fitz  # pymupdf
 import chromadb
 from dotenv import load_dotenv
-from embeddings import OpenAIEmbedder
+from v1.embeddings import OpenAIEmbedder
 
 
 # Load environment variables (OPENAI_API_KEY) from .env if present
@@ -78,6 +78,9 @@ def chunk_text_with_overlap(text: str, chunk_size: int = CHUNK_CHAR_SIZE,
     Returns:
         List of text chunks
     """
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+
     if len(text) <= chunk_size:
         return [text]
     
@@ -102,11 +105,14 @@ def chunk_text_with_overlap(text: str, chunk_size: int = CHUNK_CHAR_SIZE,
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        
-        # Move start position with overlap
-        start = end - overlap
-        if start >= len(text):
+
+        if end >= len(text):
             break
+        
+        # Move start position with overlap while guaranteeing forward progress.
+        # Boundary-aware splits can move ``end`` inside the overlap window.
+        next_start = end - overlap
+        start = next_start if next_start > start else end
     
     return chunks
 
@@ -128,7 +134,7 @@ def flush_batch(model, collection, ids: List[str], texts: List[str],
     if not texts:
         return 0
     embeddings = model.encode(texts, convert_to_numpy=True)
-    collection.add(
+    collection.upsert(
         ids=ids,
         embeddings=embeddings.tolist(),
         documents=texts,

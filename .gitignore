@@ -43,3 +43,6 @@ Thumbs.db
 .env
 .env.*
 .env copy
+corpus/Biomedical Engineering subdomains.pdf
+corpus/Polymarket Notes.pdf
+corpus/Week 1 notes - LLM TOOLKIT.pdf
