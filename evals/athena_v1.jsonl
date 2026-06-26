@@ -1,0 +1,15 @@
+{"query": "Who founded Synchron?", "category": "in my notes", "expected_answer_substring": "Thomas Oxley", "expected_source_file": "Startup Deep Dive_ Synchron.pdf"}
+{"query": "What medical problem is Synchron trying to solve?", "category": "in my notes", "expected_answer_substring": "severe paralysis", "expected_source_file": "Startup Deep Dive_ Synchron.pdf"}
+{"query": "How is the Stentrode implanted?", "category": "in my notes", "expected_answer_substring": "jugular vein", "expected_source_file": "Startup Deep Dive_ Synchron.pdf"}
+{"query": "What did patients accomplish in the COMMAND trial?", "category": "in my notes", "expected_answer_substring": "sent texts", "expected_source_file": "Startup Deep Dive_ Synchron.pdf"}
+{"query": "Name one major investor in Synchron.", "category": "in my notes", "expected_answer_substring": "Bill Gates", "expected_source_file": "Startup Deep Dive_ Synchron.pdf"}
+{"query": "What is the capital city of Mongolia?", "category": "not in my notes", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "How do I bake sourdough bread at high altitude?", "category": "not in my notes", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "Explain the offside rule in soccer.", "category": "not in my notes", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "What are the main causes of the French Revolution?", "category": "not in my notes", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "How does photosynthesis work in C4 plants?", "category": "not in my notes", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "What is Synchron's latest FDA approval status as of today?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "What is the current price of Bitcoin?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "Who is currently the CEO of OpenAI?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "What were today's top headlines about brain-computer interface startups?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "What is the latest NIH funding opportunity for neurotechnology companies?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}

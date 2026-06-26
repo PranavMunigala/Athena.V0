@@ -1,1 +1,1 @@
-pip install pymupdf chromadb openai streamlit python-dotenv numpy
+pip install pymupdf chromadb openai streamlit python-dotenv numpy langchain langchain-chroma langchain-openai "langsmith>=0.8.16"

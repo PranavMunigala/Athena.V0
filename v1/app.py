@@ -9,6 +9,13 @@ Required packages:
 """
 
 import os
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 from dotenv import load_dotenv
 st.set_page_config(
@@ -18,7 +25,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-from pathlib import Path
 import chromadb
 from v1.embeddings import OpenAIEmbedder
 from v1.rag import RAGBackend

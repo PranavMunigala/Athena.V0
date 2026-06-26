@@ -46,3 +46,11 @@ Thumbs.db
 corpus/Biomedical Engineering subdomains.pdf
 corpus/Polymarket Notes.pdf
 corpus/Week 1 notes - LLM TOOLKIT.pdf
+evals/results_wk4.json
+evals/results_wk5.json
+pyproject.toml
+requirements.txt
+uv.lock
+pyproject.toml
+requirements.txt
+uv.lock
