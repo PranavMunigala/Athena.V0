@@ -116,6 +116,123 @@ re-running `python ingest.py` (vector dimensions must stay consistent).
 `text-embedding-3-small` is ~$0.02 per 1M tokens. Embedding a typical notes corpus
 costs a few cents; each query embeds one short string. The chat LLM is billed separately.
 
+## Athena v3 - Week 7 Planning Agent
+
+Athena v3 adds a manual research-agent loop on top of the preserved v1/v2 RAG
+stack. It does not introduce LangGraph, CrewAI, AutoGen, or another agent
+framework.
+
+### Architecture
+
+```text
+Question
+  |
+  v
+PLAN                v3/planner.py
+  |
+  v
+ACT                 v3/actor.py
+  |
+  v
+OBSERVE             v3/observer.py + v3/tools.py
+  |
+  v
+REFLECT             v3/reflector.py
+  |
+  +---- continue / replan ----+
+  |                            |
+  +---------- done ------------+
+               |
+               v
+Final Answer    v3/research_agent.py
+```
+
+The loop is capped at 8 iterations. Each action chooses one of
+`search_notes`, `web_search`, or `done`. `search_notes` reuses the existing v2
+Chroma/LangChain vector store. If embedding search is unavailable, it falls back
+to a local keyword pass over the same Chroma documents. `web_search` uses
+OpenAI's hosted web-search tool when available and records an explicit failure
+observation when live search cannot run.
+
+### Trajectory
+
+`v3/trajectory.py` defines the Pydantic models used by the loop:
+
+- `Plan`: ordered steps plus rationale.
+- `ActionDecision`: selected tool, arguments, and reasoning.
+- `ReflectDecision`: continue, replan, or done, with optional replacement plan.
+- `Trajectory`: current iteration, question, current plan, compressed notes,
+  recent observations, completed steps, and separated note/web sources.
+
+`Trajectory.observations` stores only the most recent two raw tool outputs.
+Older evidence is compressed into `Trajectory.notes`, preventing prompt context
+from growing unbounded.
+
+### Reflection
+
+Reflection inspects only the current plan, compressed notes, recent observations,
+and completed steps. It can continue, terminate early, or replan. The ablation
+entry point `query_athena_v3_no_reflection()` disables this stage so evaluation
+can compare reflection-on and reflection-off behavior.
+
+### Trajectory Logging
+
+Each v3 run writes replayable JSONL events to `trajectories/<timestamp>.jsonl`.
+Generated logs are ignored by git; `trajectories/.gitkeep` keeps the directory
+available.
+
+Collapsed sample:
+
+```json
+{
+  "timestamp": "2026-07-09T13:56:55Z",
+  "iteration": 1,
+  "current_plan": {"steps": ["Search Athena notes", "Synthesize answer"], "rationale": "..."},
+  "chosen_action": {"tool": "search_notes", "args": {"query": "Who founded Synchron?"}, "reasoning": "..."},
+  "tool": "search_notes",
+  "tool_arguments": {"query": "Who founded Synchron?"},
+  "tool_result_summary": "search_notes found Thomas Oxley in the Synchron notes...",
+  "reflection": {"decision": "done", "reasoning": "Enough note evidence was gathered.", "new_plan": null},
+  "notes": "Synchron was founded by Thomas Oxley [Startup Deep Dive_ Synchron.pdf p.1].",
+  "completed_steps": ["search_notes: ..."]
+}
+```
+
+### Evaluation
+
+The existing Week 5 harness is extended rather than replaced:
+
+```bash
+.venv\Scripts\python.exe evals\run.py --version wk5 --skip-langsmith
+.venv\Scripts\python.exe evals\run.py --version wk7 --skip-langsmith
+.venv\Scripts\python.exe evals\run.py --version wk7_no_reflection --skip-langsmith
+```
+
+Saved Week 5 baseline from `evals/results_wk5.json`:
+
+| Version | Rigid | Judge | Total | Average Iterations | Iteration Distribution |
+|---------|------:|------:|------:|-------------------:|------------------------|
+| Week 5 / v2 | 86.7% | 93.3% | 90.0% | n/a | n/a |
+| Week 7 / v3 | pending live eval | pending live eval | pending live eval | pending live eval | pending live eval |
+| Week 7 no reflection | pending live eval | pending live eval | pending live eval | pending live eval | pending live eval |
+
+The Week 7 live evaluation was not run during this update because it requires
+OpenAI API calls for planning, tools, synthesis, and judging. The command is
+ready, and the runner will save `evals/results_wk7.json` with score delta,
+average iteration count, and iteration distribution once executed.
+
+### Known Limitations
+
+- Live web search depends on the configured OpenAI model supporting hosted web
+  search tools.
+- When network/API access is unavailable, v3 falls back to bounded local notes
+  search and explicit failure observations for web search.
+- The repository did not contain pre-existing `search_notes`, `web_search`, or
+  Instructor modules, so v3 adds thin wrappers while reusing the existing v2
+  retrieval stack where possible.
+- The reflection performance claim requires running both `wk7` and
+  `wk7_no_reflection` with live model access.
+
 ## Troubleshooting
 
 | Issue | Fix |

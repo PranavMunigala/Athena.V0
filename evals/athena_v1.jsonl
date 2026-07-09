@@ -13,3 +13,6 @@
 {"query": "Who is currently the CEO of OpenAI?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
 {"query": "What were today's top headlines about brain-computer interface startups?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
 {"query": "What is the latest NIH funding opportunity for neurotechnology companies?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "Compare the ReAct paper with the Reflexion paper.", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "Compare the ReAct paper's benchmark evidence against the Reflexion paper's benchmark evidence.", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}
+{"query": "Which paper provides stronger evidence for its conclusions: ReAct or Reflexion?", "category": "needs web search", "expected_answer_substring": "I don't see this in your notes.", "expected_source_file": ""}

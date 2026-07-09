@@ -1,9 +1,10 @@
 """
-Run Athena v1/v2 regression evaluations and upload experiments to LangSmith.
+Run Athena v1/v2/v3 regression evaluations and upload experiments to LangSmith.
 
 Usage:
     python evals/run.py --version wk4
     python evals/run.py --version wk5
+    python evals/run.py --version wk7
 
 Required environment:
     OPENAI_API_KEY for Athena and the judge model.
@@ -31,6 +32,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from v1.main import query_athena_v1
 from v2.chain import query_athena_v2
+from v3 import get_last_trajectory, query_athena_v3, query_athena_v3_no_reflection
 
 
 load_dotenv()
@@ -44,6 +46,8 @@ CITATION_RE = re.compile(r"\[[^\]]+\.pdf p\.\d+\]")
 VERSION_TARGETS = {
     "wk4": ("v1", query_athena_v1),
     "wk5": ("v2", query_athena_v2),
+    "wk7": ("v3", query_athena_v3),
+    "wk7_no_reflection": ("v3_no_reflection", query_athena_v3_no_reflection),
 }
 
 
@@ -128,6 +132,41 @@ def rigid_substring_and_citation(
     }
 
 
+def rigid_v3_structure_and_evidence(
+    inputs: Dict[str, Any],
+    outputs: Dict[str, Any],
+    reference_outputs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Deterministic v3 checks for separated evidence and citations."""
+    answer = _answer_text(outputs)
+    required_sections = [
+        "Summary",
+        "Key Findings",
+        "Information from Athena Notes",
+        "Information from Web Search",
+        "Citations",
+    ]
+    has_sections = all(section in answer for section in required_sections)
+    category = reference_outputs["category"]
+    expected = reference_outputs["expected_answer_substring"]
+    expected_source = reference_outputs.get("expected_source_file", "")
+
+    if category == "in my notes":
+        has_expected = expected.lower() in answer.lower()
+        cites_expected = expected_source in answer and bool(CITATION_RE.search(answer))
+        passed = has_sections and has_expected and cites_expected
+    elif category == "needs web search":
+        passed = has_sections and answer.strip() != expected
+    else:
+        passed = has_sections
+
+    return {
+        "key": "rigid_v3_structure",
+        "score": int(passed),
+        "comment": f"sections={has_sections}; category={category}; expected_source={expected_source}",
+    }
+
+
 def _parse_judge_json(raw: str) -> Dict[str, Any]:
     """Accept strict JSON or a fenced JSON object from the judge model."""
     text = raw.strip()
@@ -175,6 +214,41 @@ Return compact JSON with keys "score" as 0 or 1 and "reason" as a short string.
     return {"key": "llm_judge", "score": score, "comment": reason}
 
 
+def llm_judge_v3(
+    inputs: Dict[str, Any],
+    outputs: Dict[str, Any],
+    reference_outputs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """LLM-as-judge check for v3's research-agent answer format."""
+    prompt = f"""
+You are grading Athena v3, a planning research agent.
+
+Question: {inputs["query"]}
+Category: {reference_outputs["category"]}
+Expected useful detail: {reference_outputs["expected_answer_substring"]}
+Expected source file when notes are relevant: {reference_outputs.get("expected_source_file", "")}
+Actual answer: {_answer_text(outputs)}
+
+Grade PASS only when:
+- the answer has Summary, Key Findings, Information from Athena Notes, Information from Web Search, and Citations sections
+- notes evidence and web evidence are clearly separated
+- note-grounded claims cite notes as [filename.pdf p.X]
+- the answer is useful for the question and does not hide behind the old exact refusal unless no evidence was available
+
+Return compact JSON with keys "score" as 0 or 1 and "reason" as a short string.
+"""
+    try:
+        raw = _get_judge().invoke(prompt).content
+        parsed = _parse_judge_json(raw)
+        score = int(parsed.get("score", 0))
+        reason = str(parsed.get("reason", raw))
+    except Exception as exc:
+        score = 0
+        reason = f"Judge failed or returned invalid JSON: {exc}"
+
+    return {"key": "llm_judge_v3", "score": score, "comment": reason}
+
+
 def make_target(name: str, query_fn: Callable[[str], str]) -> Callable[[Dict[str, str]], Dict[str, str]]:
     """Wrap a plain Athena query function in the shape LangSmith evaluate expects."""
 
@@ -207,7 +281,7 @@ def run_experiment(
     )
 
 
-def _score_row(row: Dict[str, str], query_fn: Callable[[str], str]) -> Dict[str, Any]:
+def _score_row(row: Dict[str, str], query_fn: Callable[[str], str], version: str) -> Dict[str, Any]:
     """Run one fixture through the target and both evaluators."""
     inputs = {"query": row["query"]}
     reference_outputs = {
@@ -216,9 +290,14 @@ def _score_row(row: Dict[str, str], query_fn: Callable[[str], str]) -> Dict[str,
         "expected_source_file": row["expected_source_file"],
     }
     outputs = {"answer": query_fn(row["query"])}
-    rigid = rigid_substring_and_citation(inputs, outputs, reference_outputs)
-    judge = llm_judge(inputs, outputs, reference_outputs)
+    if version in {"wk7", "wk7_no_reflection"}:
+        rigid = rigid_v3_structure_and_evidence(inputs, outputs, reference_outputs)
+        judge = llm_judge_v3(inputs, outputs, reference_outputs)
+    else:
+        rigid = rigid_substring_and_citation(inputs, outputs, reference_outputs)
+        judge = llm_judge(inputs, outputs, reference_outputs)
     total = (float(rigid["score"]) + float(judge["score"])) / 2.0
+    trajectory = get_last_trajectory() if version in {"wk7", "wk7_no_reflection"} else None
     return {
         "query": row["query"],
         "category": row["category"],
@@ -228,6 +307,7 @@ def _score_row(row: Dict[str, str], query_fn: Callable[[str], str]) -> Dict[str,
         "answer": outputs["answer"],
         "rigid_comment": rigid["comment"],
         "judge_comment": judge["comment"],
+        "iteration_count": trajectory.iteration if trajectory else 0,
     }
 
 
@@ -247,7 +327,16 @@ def _summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "judge": sum(row["judge"] for row in rows) / len(rows),
             "total": sum(row["total"] for row in rows) / len(rows),
         }
-    return {"overall": overall, "categories": categories}
+    iteration_counts = [int(row.get("iteration_count", 0)) for row in results]
+    nonzero_counts = [count for count in iteration_counts if count > 0]
+    iteration_distribution = {
+        str(count): iteration_counts.count(count) for count in sorted(set(iteration_counts))
+    }
+    iterations = {
+        "average": sum(nonzero_counts) / len(nonzero_counts) if nonzero_counts else 0.0,
+        "distribution": iteration_distribution,
+    }
+    return {"overall": overall, "categories": categories, "iterations": iterations}
 
 
 def _pct(value: float) -> str:
@@ -260,13 +349,13 @@ def _print_score_tables(version: str, results: List[Dict[str, Any]]) -> None:
     summary = _summarize(results)
     print(f"\nAthena {version.upper()} Evaluation Results")
     print("=" * 88)
-    print(f"{'#':>2}  {'category':<18}  {'rigid':>8}  {'judge':>8}  {'total':>8}  query")
+    print(f"{'#':>2}  {'category':<18}  {'rigid':>8}  {'judge':>8}  {'total':>8}  {'iter':>4}  query")
     print("-" * 88)
     for index, row in enumerate(results, start=1):
         print(
             f"{index:>2}  {row['category']:<18}  "
             f"{_pct(row['rigid']):>8}  {_pct(row['judge']):>8}  "
-            f"{_pct(row['total']):>8}  {row['query'][:72]}"
+            f"{_pct(row['total']):>8}  {int(row.get('iteration_count', 0)):>4}  {row['query'][:72]}"
         )
 
     print("\nCategory Summary")
@@ -286,6 +375,11 @@ def _print_score_tables(version: str, results: List[Dict[str, Any]]) -> None:
         f"{_pct(overall['rigid']):>8}  {_pct(overall['judge']):>8}  "
         f"{_pct(overall['total']):>8}"
     )
+    if summary["iterations"]["average"]:
+        print("\nIteration Counts")
+        print("-" * 64)
+        print(f"average: {summary['iterations']['average']:.2f}")
+        print(f"distribution: {summary['iterations']['distribution']}")
 
 
 def _save_results(version: str, results: List[Dict[str, Any]]) -> Path:
@@ -305,10 +399,25 @@ def _load_saved(version: str) -> Optional[Dict[str, Any]]:
 
 
 def _explain_delta(current_version: str, current: Dict[str, Any], other: Dict[str, Any]) -> None:
-    """Print a concise 5% delta comparison when both week outputs are available."""
+    """Print a concise delta comparison when both week outputs are available."""
     current_total = current["summary"]["overall"]["total"]
     other_total = other["summary"]["overall"]["total"]
     delta = current_total - other_total
+    if {current_version, other["version"]} == {"wk5", "wk7"}:
+        print("\nWeek 5 vs Week 7 Delta")
+        print("-" * 64)
+        wk5 = current if current_version == "wk5" else other
+        wk7 = current if current_version == "wk7" else other
+        print(f"wk5 total: {_pct(wk5['summary']['overall']['total'])}")
+        print(f"wk7 total: {_pct(wk7['summary']['overall']['total'])}")
+        print(
+            f"absolute delta: {(wk7['summary']['overall']['total'] - wk5['summary']['overall']['total']) * 100:.1f} "
+            "percentage points"
+        )
+        print(f"wk7 average iterations: {wk7['summary']['iterations']['average']:.2f}")
+        print(f"wk7 iteration distribution: {wk7['summary']['iterations']['distribution']}")
+        return
+
     print("\nWeek 4 vs Week 5 Delta")
     print("-" * 64)
     if current_version == "wk5":
@@ -368,7 +477,7 @@ def parse_args() -> argparse.Namespace:
         "--version",
         choices=sorted(VERSION_TARGETS),
         required=True,
-        help="wk4 evaluates v1; wk5 evaluates v2.",
+        help="wk4 evaluates v1; wk5 evaluates v2; wk7 evaluates v3; wk7_no_reflection runs the ablation.",
     )
     parser.add_argument(
         "--skip-langsmith",
@@ -385,15 +494,16 @@ def main() -> None:
     fixtures = load_fixtures()
     target_name, query_fn = VERSION_TARGETS[args.version]
 
-    results = [_score_row(row, query_fn) for row in fixtures]
+    results = [_score_row(row, query_fn, args.version) for row in fixtures]
     _print_score_tables(args.version, results)
     results_path = _save_results(args.version, results)
     print(f"\nSaved local results: {results_path}")
 
-    other_version = "wk5" if args.version == "wk4" else "wk4"
-    other = _load_saved(other_version)
-    if other:
-        _explain_delta(args.version, _load_saved(args.version), other)
+    comparison_versions = ["wk5"] if args.version == "wk7" else ["wk7", "wk5" if args.version == "wk4" else "wk4"]
+    for other_version in comparison_versions:
+        other = _load_saved(other_version)
+        if other:
+            _explain_delta(args.version, _load_saved(args.version), other)
 
     if not args.skip_langsmith:
         _maybe_upload_to_langsmith(fixtures, args.version, target_name, query_fn)
