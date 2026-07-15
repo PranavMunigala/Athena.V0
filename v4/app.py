@@ -85,6 +85,13 @@ def _run_until_interrupt_or_end(app, config: Dict[str, Any], input_state, progre
 
     for step in app.stream(input_state, config, stream_mode="updates"):
         (node_name, update), = step.items()
+        if node_name == "__interrupt__":
+            # stream_mode="updates" reports the interrupt itself as a
+            # tuple[Interrupt, ...] under this key, not a state dict --
+            # there's nothing node-shaped to render, just note the pause.
+            current.info("Paused for human approval before finalize_node.")
+            st.session_state.timeline.append(("Interrupt", "Paused before finalize_node for approval."))
+            continue
         label = NODE_LABELS.get(node_name, node_name)
         detail = _describe_update(node_name, update)
         current.info(f"Running: **{label}**")
