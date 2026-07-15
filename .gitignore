@@ -59,3 +59,6 @@ requirements.txt
 uv.lock
 requirements.text
 
+
+# v4 LangGraph checkpoints (local run state, not source)
+v4/checkpoints*.db
