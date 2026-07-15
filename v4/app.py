@@ -57,30 +57,48 @@ def _config(thread_id: str) -> Dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def _render_update(node_name: str, update: Dict[str, Any], container) -> None:
-    """Render one graph.stream(stream_mode='updates') event live."""
-    label = NODE_LABELS.get(node_name, node_name)
-    with container.container():
-        st.markdown(f"**{label}**")
-        if node_name == "plan_node" and update.get("plan") is not None:
-            plan = update["plan"]
-            st.write("Steps:", plan.steps)
-            st.caption(plan.rationale)
-        elif node_name == "act_node" and update.get("action") is not None:
-            action = update["action"]
-            st.write(f"Tool: `{action.tool}` — {action.reasoning}")
-        elif node_name == "observe_node":
-            for obs in update.get("observations", []):
-                st.write(f"`{obs.tool}` -> {obs.summary}")
-        elif node_name == "reflect_node" and update.get("reflection") is not None:
-            reflection = update["reflection"]
-            st.write(f"Decision: **{reflection.decision}** — {reflection.reasoning}")
+def _describe_update(node_name: str, update: Dict[str, Any]) -> str:
+    """One-line-plus-detail description of a single node's update, used both
+    for the live 'current node' badge and the accumulated timeline log."""
+    if node_name == "plan_node" and update.get("plan") is not None:
+        plan = update["plan"]
+        return f"Steps: {plan.steps}\n\n{plan.rationale}"
+    if node_name == "act_node" and update.get("action") is not None:
+        action = update["action"]
+        return f"Tool: `{action.tool}` — {action.reasoning}"
+    if node_name == "observe_node":
+        return "\n\n".join(f"`{obs.tool}` -> {obs.summary}" for obs in update.get("observations", []))
+    if node_name == "reflect_node" and update.get("reflection") is not None:
+        reflection = update["reflection"]
+        return f"Decision: **{reflection.decision}** — {reflection.reasoning}"
+    return ""
 
 
 def _run_until_interrupt_or_end(app, config: Dict[str, Any], input_state, progress) -> None:
-    """Stream one segment of the graph, rendering each node's update live."""
+    """Stream one segment of the graph, showing a live 'current node' badge
+    plus a growing timeline of every node's output as events arrive --
+    intermediate state via graph.stream(), never interrupt_before (that is
+    reserved for the finalize_node approval gate)."""
+    st.session_state.setdefault("timeline", [])
+    current = progress.empty()
+    log = progress.container()
+
     for node_name, update in app.stream(input_state, config, stream_mode="updates"):
-        _render_update(node_name, update, progress.empty())
+        label = NODE_LABELS.get(node_name, node_name)
+        detail = _describe_update(node_name, update)
+        current.info(f"Running: **{label}**")
+        st.session_state.timeline.append((label, detail))
+        with log.expander(f"{label} (iteration {update.get('iteration', '')})".strip(), expanded=True):
+            st.write(detail or "_(no summary)_")
+    current.empty()
+
+
+def _render_timeline(progress) -> None:
+    """Redraw the accumulated timeline after a rerun (session_state persists
+    across Streamlit reruns even though the graph.stream() generator does not)."""
+    for label, detail in st.session_state.get("timeline", []):
+        with progress.expander(label, expanded=False):
+            st.write(detail or "_(no summary)_")
 
 
 def _draft_brief(state_values: Dict[str, Any]) -> None:
@@ -124,6 +142,7 @@ def main() -> None:
         )
         if st.button("New thread"):
             st.session_state.thread_id = str(uuid.uuid4())
+            st.session_state.timeline = []
             st.rerun()
 
     config = _config(st.session_state.thread_id)
@@ -141,10 +160,13 @@ def main() -> None:
         placeholder="e.g., What medical problem is Synchron trying to solve?",
     )
 
+    st.subheader("Live progress")
     progress = st.container()
+    _render_timeline(progress)
 
     start_disabled = not question or (snapshot.values and snapshot.next)
     if st.button("Start research", disabled=bool(start_disabled)):
+        st.session_state.timeline = []
         with compiled_app(db_path=db_path) as app:
             _run_until_interrupt_or_end(app, config, initial_state(question), progress)
             snapshot = app.get_state(config)
