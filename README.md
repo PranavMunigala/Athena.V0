@@ -208,18 +208,31 @@ The existing Week 5 harness is extended rather than replaced:
 .venv\Scripts\python.exe evals\run.py --version wk7_no_reflection --skip-langsmith
 ```
 
-Saved Week 5 baseline from `evals/results_wk5.json`:
+Saved results from `evals/results_wk5.json` / `evals/results_wk7.json` /
+`evals/results_wk8.json`:
 
 | Version | Rigid | Judge | Total | Average Iterations | Iteration Distribution |
 |---------|------:|------:|------:|-------------------:|------------------------|
 | Week 5 / v2 | 86.7% | 93.3% | 90.0% | n/a | n/a |
-| Week 7 / v3 | pending live eval | pending live eval | pending live eval | pending live eval | pending live eval |
-| Week 7 no reflection | pending live eval | pending live eval | pending live eval | pending live eval | pending live eval |
+| Week 7 / v3 (hand-rolled loop) | 72.2% | 100.0% | 86.1% | 2.11 | {1: 9, 2: 5, 3: 2, 6: 1, 7: 1} |
+| Week 8 / v4 (LangGraph) | 72.2% | 100.0% | 86.1% | 2.39 | {1: 8, 2: 4, 3: 3, 5: 2, 8: 1} |
 
-The Week 7 live evaluation was not run during this update because it requires
-OpenAI API calls for planning, tools, synthesis, and judging. The command is
-ready, and the runner will save `evals/results_wk7.json` with score delta,
-average iteration count, and iteration distribution once executed.
+Week 8 matches Week 7's total exactly, including an identical per-category
+breakdown (`in my notes`: 50.0%, `needs web search`: 100.0%, `not in my
+notes`: 100.0%) — the LangGraph rebuild preserves v3's plan/act/observe/
+reflect behavior rather than regressing it (v4's `finalize_node` reuses
+`v3.research_agent.final_answer()` verbatim, so both versions produce the
+same answer shape and are scored by the same evaluators). The iteration
+distribution differs slightly because v4 always runs one extra `reflect`
+step after the actor volunteers "done" (see [v4/DESIGN.md](v4/DESIGN.md),
+"done handling"), which shifts some iteration counts up by one compared to
+v3's early-break loop.
+
+Run the Week 8 eval with:
+
+```bash
+.venv\Scripts\python.exe evals\run.py --version wk8 --skip-langsmith
+```
 
 ### Known Limitations
 
@@ -232,6 +245,52 @@ average iteration count, and iteration distribution once executed.
   retrieval stack where possible.
 - The reflection performance claim requires running both `wk7` and
   `wk7_no_reflection` with live model access.
+
+## Athena v4 - Week 8 LangGraph Agent
+
+Athena v4 rebuilds v3's hand-rolled plan/act/observe/reflect loop as a
+`langgraph.graph.StateGraph`, additively (v1/v2/v3 are untouched) and reusing
+v3's Pydantic models and tool wrappers rather than forking them. Full design
+rationale — the node/edge mapping, every `AthenaState` field and its reducer,
+and the deliberate behavior differences from v3 — is in
+[v4/DESIGN.md](v4/DESIGN.md).
+
+![Athena v4 graph](docs/graph.png)
+
+Only `reflect_node` fans out via a conditional edge (`route_after_reflect`,
+mirroring v3's continue/replan/done decision); every other edge is fixed.
+The compiled graph is checkpointed with `SqliteSaver` (`v4/checkpoints.db`)
+and compiled with `interrupt_before=["finalize_node"]`, so every run pauses
+before the final answer is synthesized and shows the accumulated research
+notes as a draft brief for human approval.
+
+### Running it
+
+```bash
+uv run streamlit run v4/app.py
+```
+
+The UI streams live per-node progress (`graph.stream(..., stream_mode=
+"updates")`), then pauses before `finalize_node` with Approve / Reject
+controls — Approve resumes normally; Reject re-routes to `plan_node` with
+your feedback folded into the next planning prompt.
+
+Regenerate the graph diagram above with:
+
+```bash
+make graph
+```
+
+(`draw_mermaid_png()` renders via the remote Mermaid.ink API, so no local
+Graphviz install is required — see v4/DESIGN.md, "Graph visualization".)
+
+### Resumability
+
+Because every node boundary is a SqliteSaver checkpoint, a process killed
+mid-run resumes from its last completed node on restart, against the same
+`thread_id` and `v4/checkpoints.db` file, rather than starting over. See
+[v4/demo_resume.md](v4/demo_resume.md) for a reproducible kill/restart demo
+(best captured as a short screen recording).
 
 ## Troubleshooting
 
