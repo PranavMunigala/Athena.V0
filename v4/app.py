@@ -83,7 +83,8 @@ def _run_until_interrupt_or_end(app, config: Dict[str, Any], input_state, progre
     current = progress.empty()
     log = progress.container()
 
-    for node_name, update in app.stream(input_state, config, stream_mode="updates"):
+    for step in app.stream(input_state, config, stream_mode="updates"):
+        (node_name, update), = step.items()
         label = NODE_LABELS.get(node_name, node_name)
         detail = _describe_update(node_name, update)
         current.info(f"Running: **{label}**")
