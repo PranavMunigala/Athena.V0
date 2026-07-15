@@ -5,6 +5,7 @@ Usage:
     python evals/run.py --version wk4
     python evals/run.py --version wk5
     python evals/run.py --version wk7
+    python evals/run.py --version wk8
 
 Required environment:
     OPENAI_API_KEY for Athena and the judge model.
@@ -33,6 +34,7 @@ if str(ROOT_DIR) not in sys.path:
 from v1.main import query_athena_v1
 from v2.chain import query_athena_v2
 from v3 import get_last_trajectory, query_athena_v3, query_athena_v3_no_reflection
+from v4.eval_adapter import get_last_v4_run, query_athena_v4
 
 
 load_dotenv()
@@ -48,6 +50,20 @@ VERSION_TARGETS = {
     "wk5": ("v2", query_athena_v2),
     "wk7": ("v3", query_athena_v3),
     "wk7_no_reflection": ("v3_no_reflection", query_athena_v3_no_reflection),
+    "wk8": ("v4", query_athena_v4),
+}
+
+# wk7/wk7_no_reflection/wk8 all produce v3's Summary/Key Findings/... answer
+# format (v4/finalize_node reuses v3.research_agent.final_answer() verbatim),
+# so they share the same structural evaluators.
+V3_STYLE_VERSIONS = {"wk7", "wk7_no_reflection", "wk8"}
+
+COMPARISON_TARGETS = {
+    "wk4": ["wk5"],
+    "wk5": ["wk4"],
+    "wk7": ["wk5"],
+    "wk7_no_reflection": ["wk7"],
+    "wk8": ["wk7"],
 }
 
 
@@ -290,14 +306,19 @@ def _score_row(row: Dict[str, str], query_fn: Callable[[str], str], version: str
         "expected_source_file": row["expected_source_file"],
     }
     outputs = {"answer": query_fn(row["query"])}
-    if version in {"wk7", "wk7_no_reflection"}:
+    if version in V3_STYLE_VERSIONS:
         rigid = rigid_v3_structure_and_evidence(inputs, outputs, reference_outputs)
         judge = llm_judge_v3(inputs, outputs, reference_outputs)
     else:
         rigid = rigid_substring_and_citation(inputs, outputs, reference_outputs)
         judge = llm_judge(inputs, outputs, reference_outputs)
     total = (float(rigid["score"]) + float(judge["score"])) / 2.0
-    trajectory = get_last_trajectory() if version in {"wk7", "wk7_no_reflection"} else None
+    if version in {"wk7", "wk7_no_reflection"}:
+        trajectory = get_last_trajectory()
+    elif version == "wk8":
+        trajectory = get_last_v4_run()
+    else:
+        trajectory = None
     return {
         "query": row["query"],
         "category": row["category"],
@@ -403,6 +424,21 @@ def _explain_delta(current_version: str, current: Dict[str, Any], other: Dict[st
     current_total = current["summary"]["overall"]["total"]
     other_total = other["summary"]["overall"]["total"]
     delta = current_total - other_total
+    if {current_version, other["version"]} == {"wk7", "wk8"}:
+        print("\nWeek 7 vs Week 8 Delta")
+        print("-" * 64)
+        wk7 = current if current_version == "wk7" else other
+        wk8 = current if current_version == "wk8" else other
+        print(f"wk7 total: {_pct(wk7['summary']['overall']['total'])}")
+        print(f"wk8 total: {_pct(wk8['summary']['overall']['total'])}")
+        print(
+            f"absolute delta: {(wk8['summary']['overall']['total'] - wk7['summary']['overall']['total']) * 100:.1f} "
+            "percentage points"
+        )
+        print(f"wk8 average iterations: {wk8['summary']['iterations']['average']:.2f}")
+        print(f"wk8 iteration distribution: {wk8['summary']['iterations']['distribution']}")
+        return
+
     if {current_version, other["version"]} == {"wk5", "wk7"}:
         print("\nWeek 5 vs Week 7 Delta")
         print("-" * 64)
@@ -477,7 +513,10 @@ def parse_args() -> argparse.Namespace:
         "--version",
         choices=sorted(VERSION_TARGETS),
         required=True,
-        help="wk4 evaluates v1; wk5 evaluates v2; wk7 evaluates v3; wk7_no_reflection runs the ablation.",
+        help=(
+            "wk4 evaluates v1; wk5 evaluates v2; wk7 evaluates v3; "
+            "wk7_no_reflection runs the ablation; wk8 evaluates v4 (LangGraph)."
+        ),
     )
     parser.add_argument(
         "--skip-langsmith",
@@ -499,7 +538,7 @@ def main() -> None:
     results_path = _save_results(args.version, results)
     print(f"\nSaved local results: {results_path}")
 
-    comparison_versions = ["wk5"] if args.version == "wk7" else ["wk7", "wk5" if args.version == "wk4" else "wk4"]
+    comparison_versions = COMPARISON_TARGETS.get(args.version, [])
     for other_version in comparison_versions:
         other = _load_saved(other_version)
         if other:
