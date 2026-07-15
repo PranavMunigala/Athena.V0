@@ -12,7 +12,7 @@ from typing import Annotated, List, Literal, Optional, TypedDict
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel
 
-from v3.trajectory import Plan, ReflectDecision
+from v3.trajectory import ActionDecision, Plan, ReflectDecision
 
 
 class Observation(BaseModel):
@@ -49,6 +49,7 @@ class AthenaState(TypedDict):
     messages: Annotated[list, add_messages]
     question: str
     plan: Optional[Plan]
+    action: Optional[ActionDecision]
     notes: str
     observations: Annotated[List[Observation], keep_recent_observations]
     completed_steps: Annotated[List[str], operator.add]
@@ -65,6 +66,7 @@ def initial_state(question: str) -> AthenaState:
         messages=[],
         question=question,
         plan=None,
+        action=None,
         notes="",
         observations=[],
         completed_steps=[],
